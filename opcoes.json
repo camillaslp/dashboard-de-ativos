@@ -1,0 +1,12 @@
+{
+    "PETRV321": {
+        "codigo": "PETRV321",
+        "base": "PETR.SA",
+        "tipo": "put",
+        "vencimento": "2025-10-15",
+        "strike": 32.1,
+        "preco_medio": 0.2,
+        "preco_objetivo": 0.25,
+        "ultimo_fechamento": null
+    }
+}

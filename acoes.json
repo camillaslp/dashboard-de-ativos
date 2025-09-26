@@ -1,0 +1,46 @@
+{
+    "PETR4.SA": {
+        "preco_medio": 32.239999999999995,
+        "preco_teto": 32.99
+    },
+    "BBAS3.SA": {
+        "preco_medio": 24.95,
+        "preco_teto": 18.9
+    },
+    "BRBI11.SA": {
+        "preco_medio": 14.5,
+        "preco_teto": 17.5
+    },
+    "TAEE11.SA": {
+        "preco_medio": 33.9,
+        "preco_teto": 34.0
+    },
+    "ISAE4.SA": {
+        "preco_medio": 23.5,
+        "preco_teto": 25.0
+    },
+    "CMIG4.SA": {
+        "preco_medio": 10.2,
+        "preco_teto": 11.0
+    },
+    "CXSE4.SA": {
+        "preco_medio": 14.95,
+        "preco_teto": 15.0
+    },
+    "TIMS3.SA": {
+        "preco_medio": 16.18,
+        "preco_teto": 19.0
+    },
+    "FIQE3.SA": {
+        "preco_medio": 3.61,
+        "preco_teto": 5.0
+    },
+    "SAPR4.SA": {
+        "preco_medio": 5.13,
+        "preco_teto": 6.0
+    },
+    "BBSE3.SA": {
+        "preco_medio": 33.96,
+        "preco_teto": 35
+    }
+}
