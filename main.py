@@ -31,46 +31,33 @@ except Exception as e:
     st.error(f"Erro ao autenticar no Google Sheets: {e}")
     st.stop()
 
-# ------------------- Abrir planilha específica -------------------
-planilha_nome = "Acoes"  # Nome da sua planilha
+# ------------------- Abrir planilha -------------------
+planilha_nome = "Acoes"
 try:
     sheet = client.open(planilha_nome).sheet1
-    st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
+    # st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
 except gspread.exceptions.SpreadsheetNotFound:
-    st.error(f"Planilha '{planilha_nome}' não encontrada. Verifique o nome e se o Service Account tem acesso.")
-    st.stop()
+    st.error(f"Planilha '{planilha_nome}' não encontrada. "
+             "Verifique o nome e se compartilhou com o Service Account.")
 except gspread.exceptions.APIError as e:
     st.error(f"Erro de API ao abrir a planilha '{planilha_nome}': {e}")
-    st.stop()
 
-# ------------------- Funções para Google Sheets -------------------
-def carregar_acoes_google(sheet):
-    registros = sheet.get_all_records()
-    ativos = {}
-    for r in registros:
-        codigo = r.get("codigo")
-        if codigo:
-            ativos[codigo] = {
-                "preco_medio": float(r.get("preco_medio", 0)),
-                "preco_teto": float(r.get("preco_teto", 0))
-            }
-    return ativos
-
-def salvar_acoes_google(sheet, ativos):
-    # Limpar antes de regravar
-    sheet.clear()
-    # Cabeçalho
-    sheet.append_row(["codigo", "preco_medio", "preco_teto"])
-    # Dados
-    for codigo, info in ativos.items():
-        sheet.append_row([codigo, info["preco_medio"], info["preco_teto"]])
-
-# ------------------- Utilitários -------------------
+# ------------------- Funções Auxiliares -------------------
 def normalizar_codigo(codigo):
-    c = codigo.strip().upper()
+    c = str(codigo).strip().upper()
     if c and not c.endswith(".SA"):
         c += ".SA"
     return c
+
+def str_para_float(valor_str):
+    """Converte entrada com vírgula para float"""
+    if isinstance(valor_str, str):
+        return float(valor_str.replace(".", "").replace(",", "."))
+    return float(valor_str)
+
+def float_para_str(valor_float):
+    """Converte float para string com vírgula e 2 casas decimais"""
+    return f"{valor_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def avaliar_alerta(preco_atual, preco_teto):
     if preco_atual < preco_teto:
@@ -78,6 +65,46 @@ def avaliar_alerta(preco_atual, preco_teto):
     elif preco_atual > preco_teto * 1.1:
         return "🔴 Acima do Teto", "red"
     return "Manter Posição", "gray"
+
+# ------------------- Funções Google Sheets -------------------
+def carregar_acoes_google(sheet):
+    dados = sheet.get_all_records()
+    ativos = {}
+    for r in dados:
+        codigo = normalizar_codigo(r.get("codigo", ""))
+        try:
+            preco_medio = str_para_float(r.get("preco_medio", "0"))
+        except:
+            preco_medio = 0.0
+        try:
+            preco_teto = str_para_float(r.get("preco_teto", "0"))
+        except:
+            preco_teto = 0.0
+        if codigo:
+            ativos[codigo] = {"preco_medio": preco_medio, "preco_teto": preco_teto}
+    return ativos
+
+def salvar_acao_google(sheet, codigo, preco_medio, preco_teto):
+    """Atualiza ou adiciona ação no Google Sheets"""
+    dados = sheet.get_all_records()
+    codigo = normalizar_codigo(codigo)
+    encontrado = False
+    for i, r in enumerate(dados):
+        if normalizar_codigo(r["codigo"]) == codigo:
+            sheet.update(f"B{i+2}", preco_medio)  # preco_medio como float
+            sheet.update(f"C{i+2}", preco_teto)   # preco_teto como float
+            encontrado = True
+            break
+    if not encontrado:
+        sheet.append_row([codigo, preco_medio, preco_teto])
+
+def excluir_acao_google(sheet, codigo):
+    dados = sheet.get_all_records()
+    codigo = normalizar_codigo(codigo)
+    for i, r in enumerate(dados):
+        if normalizar_codigo(r["codigo"]) == codigo:
+            sheet.delete_row(i+2)
+            break
 
 # ------------------- Painel de Ações -------------------
 def painel_acoes():
@@ -87,55 +114,56 @@ def painel_acoes():
     with st.sidebar:
         st.header("⚙️ Gerenciar Ativos")
 
-        # Cadastrar nova ação
+        # Cadastro de ação
         with st.expander("➕ Cadastrar Ação", expanded=False):
             codigo_input = st.text_input("Código do Ativo (ex: PETR4)", key="cad_cod")
-            preco_medio = st.number_input("Preço Médio", min_value=0.0, step=0.01, key="cad_medio")
-            preco_teto = st.number_input("Preço Teto", min_value=0.0, step=0.01, key="cad_teto")
+            preco_medio = st.text_input("Preço Médio (ex: 32,00)", key="cad_medio")
+            preco_teto = st.text_input("Preço Teto (ex: 33,00)", key="cad_teto")
             if st.button("Salvar Ação", key="btn_salvar_acao"):
                 codigo = normalizar_codigo(codigo_input)
-                if codigo:
-                    try:
-                        tk = yf.Ticker(codigo)
-                        hist = tk.history(period="5d")
-                        if hist.empty or hist['Close'].dropna().empty:
-                            st.error("Código inválido ou sem pregão recente.")
-                        else:
-                            ativos[codigo] = {"preco_medio": preco_medio, "preco_teto": preco_teto}
-                            salvar_acoes_google(sheet, ativos)
-                            st.success(f"{codigo} salvo!")
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao validar o código: {e}")
+                try:
+                    pm = str_para_float(preco_medio)
+                    pt = str_para_float(preco_teto)
+                    tk = yf.Ticker(codigo)
+                    hist = tk.history(period="5d")
+                    if hist.empty or hist['Close'].dropna().empty:
+                        st.error("Código inválido ou sem pregão recente.")
+                    else:
+                        salvar_acao_google(sheet, codigo, pm, pt)
+                        st.success(f"{codigo} salvo!")
+                        st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
 
-        # Editar ação existente
         if ativos:
+            # Editar ação
             with st.expander("✏️ Editar Ação", expanded=False):
                 ativo_ed = st.selectbox("Selecione o Ativo", list(ativos.keys()), key="edicao_acao")
-                novo_med = st.number_input("Novo Preço Médio", value=ativos[ativo_ed]["preco_medio"], step=0.01, key="novo_med")
-                novo_teto = st.number_input("Novo Preço Teto", value=ativos[ativo_ed]["preco_teto"], step=0.01, key="novo_teto")
+                novo_med = st.text_input("Novo Preço Médio", value=float_para_str(ativos[ativo_ed]["preco_medio"]), key="novo_med")
+                novo_teto = st.text_input("Novo Preço Teto", value=float_para_str(ativos[ativo_ed]["preco_teto"]), key="novo_teto")
                 if st.button("Atualizar Ação", key="btn_atualizar_acao"):
-                    ativos[ativo_ed]["preco_medio"] = novo_med
-                    ativos[ativo_ed]["preco_teto"] = novo_teto
-                    salvar_acoes_google(sheet, ativos)
-                    st.success("Atualizado!")
-                    st.rerun()
+                    try:
+                        pm = str_para_float(novo_med)
+                        pt = str_para_float(novo_teto)
+                        salvar_acao_google(sheet, ativo_ed, pm, pt)
+                        st.success(f"{ativo_ed} atualizado!")
+                        st.experimental_rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
 
             # Excluir ação
             with st.expander("🗑️ Excluir Ação", expanded=False):
                 ativo_exc = st.selectbox("Selecione para Excluir", list(ativos.keys()), key="excluir_acao")
-                if st.button("Remover", key="btn_excluir_acao"):
-                    del ativos[ativo_exc]
-                    salvar_acoes_google(sheet, ativos)
+                if st.button("Remover", key="btn_remover_acao"):
+                    excluir_acao_google(sheet, ativo_exc)
                     st.warning(f"{ativo_exc} removido!")
-                    st.rerun()
+                    st.experimental_rerun()
 
-    # Se não houver ativos
     if not ativos:
         st.info("Nenhuma ação cadastrada. Adicione uma na barra lateral.")
         return
 
-    # Buscar dados de mercado via Yahoo Finance
+    # ------------------- Cards -------------------
     codigos_str = " ".join(ativos.keys())
     dados_acoes = yf.download(codigos_str, period="5d", interval="1d", progress=False, group_by='ticker')
 
@@ -143,7 +171,6 @@ def painel_acoes():
         st.error("Não foi possível buscar os dados das ações.")
         return
 
-    # Renderizar cards
     cols = st.columns(5)
     i = 0
     for codigo, info in ativos.items():
@@ -176,9 +203,9 @@ def painel_acoes():
                                 padding:5px; border-radius:5px; font-weight:bold;">
                         {mensagem}
                     </div>
-                    <b>Preço Atual: R$ {preco_atual:.2f}</b>
-                    Preço Médio: R$ {info['preco_medio']:.2f}
-                    <p>Preço Teto: R$ {info['preco_teto']:.2f}</p>
+                    <b>Preço Atual: R$ {float_para_str(preco_atual)}</b>
+                    Preço Médio: R$ {float_para_str(info['preco_medio'])}
+                    Preço Teto: R$ {float_para_str(info['preco_teto'])}</p>
                     <p>Variação D-1: <span style="color:{'green' if variacao >= 0 else 'red'}; font-weight:bold;">
                         {'▲' if variacao >= 0 else '▼'} {variacao:.2f}%
                     </span></p>  
@@ -190,7 +217,7 @@ def painel_acoes():
 
         except Exception as e:
             with cols[i % 5]:
-                st.error(f"Erro no card de {codigo.replace('.SA','')}")
+                st.error(f"Erro no card de {codigo.replace('.SA','')}: {e}")
             i += 1
 
 # ------------------- Main -------------------
