@@ -2,7 +2,6 @@ import streamlit as st
 st.set_page_config(layout="wide")
 import yfinance as yf
 import json
-import os
 import warnings
 from google.oauth2.service_account import Credentials
 import gspread
@@ -31,36 +30,42 @@ try:
 except Exception as e:
     st.error(f"Erro ao autenticar no Google Sheets: {e}")
     st.stop()
-    
+
 # ------------------- Abrir planilha específica -------------------
-planilha_nome = "Acoes"  # Alterar para o nome correto
+planilha_nome = "Acoes"  # Nome da sua planilha
 try:
     sheet = client.open(planilha_nome).sheet1
-    # st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
+    st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
 except gspread.exceptions.SpreadsheetNotFound:
-    st.error(f"Planilha '{planilha_nome}' não encontrada. "
-             "Verifique se o nome está correto e se foi compartilhada com o Service Account.")
+    st.error(f"Planilha '{planilha_nome}' não encontrada. Verifique o nome e se o Service Account tem acesso.")
+    st.stop()
 except gspread.exceptions.APIError as e:
     st.error(f"Erro de API ao abrir a planilha '{planilha_nome}': {e}")
+    st.stop()
 
-# --------------- Config ----------------
-ARQUIVO_ACOES = "acoes.json"
+# ------------------- Funções para Google Sheets -------------------
+def carregar_acoes_google(sheet):
+    registros = sheet.get_all_records()
+    ativos = {}
+    for r in registros:
+        codigo = r.get("codigo")
+        if codigo:
+            ativos[codigo] = {
+                "preco_medio": float(r.get("preco_medio", 0)),
+                "preco_teto": float(r.get("preco_teto", 0))
+            }
+    return ativos
 
-# --------------- Utils -----------------
-def carregar_json(path):
-    if os.path.exists(path):
-        if os.path.getsize(path) > 0:
-            with open(path, "r") as f:
-                try:
-                    return json.load(f)
-                except json.JSONDecodeError:
-                    return {}
-    return {}
+def salvar_acoes_google(sheet, ativos):
+    # Limpar antes de regravar
+    sheet.clear()
+    # Cabeçalho
+    sheet.append_row(["codigo", "preco_medio", "preco_teto"])
+    # Dados
+    for codigo, info in ativos.items():
+        sheet.append_row([codigo, info["preco_medio"], info["preco_teto"]])
 
-def salvar_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=4)
-
+# ------------------- Utilitários -------------------
 def normalizar_codigo(codigo):
     c = codigo.strip().upper()
     if c and not c.endswith(".SA"):
@@ -74,13 +79,15 @@ def avaliar_alerta(preco_atual, preco_teto):
         return "🔴 Acima do Teto", "red"
     return "Manter Posição", "gray"
 
-# --------------- Painel Ações ----------------
+# ------------------- Painel de Ações -------------------
 def painel_acoes():
     st.title("📊 Dashboard de Ações")
-    ativos = carregar_json(ARQUIVO_ACOES)
+    ativos = carregar_acoes_google(sheet)
 
     with st.sidebar:
         st.header("⚙️ Gerenciar Ativos")
+
+        # Cadastrar nova ação
         with st.expander("➕ Cadastrar Ação", expanded=False):
             codigo_input = st.text_input("Código do Ativo (ex: PETR4)", key="cad_cod")
             preco_medio = st.number_input("Preço Médio", min_value=0.0, step=0.01, key="cad_medio")
@@ -95,12 +102,13 @@ def painel_acoes():
                             st.error("Código inválido ou sem pregão recente.")
                         else:
                             ativos[codigo] = {"preco_medio": preco_medio, "preco_teto": preco_teto}
-                            salvar_json(ARQUIVO_ACOES, ativos)
+                            salvar_acoes_google(sheet, ativos)
                             st.success(f"{codigo} salvo!")
                             st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao validar o código: {e}")
 
+        # Editar ação existente
         if ativos:
             with st.expander("✏️ Editar Ação", expanded=False):
                 ativo_ed = st.selectbox("Selecione o Ativo", list(ativos.keys()), key="edicao_acao")
@@ -109,22 +117,25 @@ def painel_acoes():
                 if st.button("Atualizar Ação", key="btn_atualizar_acao"):
                     ativos[ativo_ed]["preco_medio"] = novo_med
                     ativos[ativo_ed]["preco_teto"] = novo_teto
-                    salvar_json(ARQUIVO_ACOES, ativos)
+                    salvar_acoes_google(sheet, ativos)
                     st.success("Atualizado!")
                     st.rerun()
 
+            # Excluir ação
             with st.expander("🗑️ Excluir Ação", expanded=False):
                 ativo_exc = st.selectbox("Selecione para Excluir", list(ativos.keys()), key="excluir_acao")
                 if st.button("Remover", key="btn_excluir_acao"):
                     del ativos[ativo_exc]
-                    salvar_json(ARQUIVO_ACOES, ativos)
+                    salvar_acoes_google(sheet, ativos)
                     st.warning(f"{ativo_exc} removido!")
                     st.rerun()
 
+    # Se não houver ativos
     if not ativos:
         st.info("Nenhuma ação cadastrada. Adicione uma na barra lateral.")
         return
 
+    # Buscar dados de mercado via Yahoo Finance
     codigos_str = " ".join(ativos.keys())
     dados_acoes = yf.download(codigos_str, period="5d", interval="1d", progress=False, group_by='ticker')
 
@@ -132,17 +143,16 @@ def painel_acoes():
         st.error("Não foi possível buscar os dados das ações.")
         return
 
+    # Renderizar cards
     cols = st.columns(5)
     i = 0
     for codigo, info in ativos.items():
         try:
-            # Seleciona corretamente o DataFrame para o ativo
             if len(ativos) == 1:
                 dados_ativo = dados_acoes
             else:
                 dados_ativo = dados_acoes.get(codigo)
 
-            # Valida dados
             if dados_ativo is None or dados_ativo.empty or dados_ativo['Close'].dropna().empty:
                 with cols[i % 5]:
                     st.warning(f"Sem dados para {codigo.replace('.SA','')} (final de semana/feriado?)")
@@ -183,5 +193,5 @@ def painel_acoes():
                 st.error(f"Erro no card de {codigo.replace('.SA','')}")
             i += 1
 
-# --------------- Main ----------------
+# ------------------- Main -------------------
 painel_acoes()
