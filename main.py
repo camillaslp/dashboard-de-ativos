@@ -15,8 +15,8 @@ client = gspread.authorize(creds)
 st.subheader("Planilhas acessíveis pelo Service Account")
 try:
     spreadsheets = client.list_spreadsheet_files()
-   for ss in spreadsheets:
-    st.write(f"- {ss['name']} (ID: {ss['id']})")
+    for ss in spreadsheets:
+        st.write(f"- {ss['name']} (ID: {ss['id']})")
 except Exception as e:
     st.error(f"Erro ao listar planilhas: {e}")
 
@@ -212,6 +212,7 @@ def painel_acoes():
 # --------------- Main ----------------
 st.set_page_config(layout="wide")
 painel_acoes()
+
 
 
 
