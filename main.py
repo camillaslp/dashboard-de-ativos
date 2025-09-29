@@ -7,6 +7,18 @@ from google.oauth2.service_account import Credentials
 import gspread
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+client = gspread.authorize(creds)
+
+try:
+    spreadsheets = client.list_spreadsheet_files()
+    for ss in spreadsheets:
+        st.write(f"- {ss['name']} (ID: {ss['id']})")
+except Exception as e:
+    st.error(f"Erro ao listar planilhas: {e}")
+
 # ------------------- Carregar credenciais -------------------
 try:
     creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
@@ -199,4 +211,5 @@ def painel_acoes():
 # --------------- Main ----------------
 st.set_page_config(layout="wide")
 painel_acoes()
+
 
