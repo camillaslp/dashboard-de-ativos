@@ -7,19 +7,6 @@ from google.oauth2.service_account import Credentials
 import gspread
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-client = gspread.authorize(creds)
-
-st.subheader("Planilhas acessíveis pelo Service Account")
-try:
-    spreadsheets = client.list_spreadsheet_files()
-    for ss in spreadsheets:
-        st.write(f"- {ss['name']} (ID: {ss['id']})")
-except Exception as e:
-    st.error(f"Erro ao listar planilhas: {e}")
-
 # ------------------- Carregar credenciais -------------------
 try:
     creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
@@ -44,15 +31,17 @@ except Exception as e:
     st.stop()
 
 # ------------------- Listar planilhas acessíveis -------------------
+st.subheader("Planilhas acessíveis pelo Service Account")
 try:
-    st.write("Planilhas acessíveis pelo Service Account:")
-    for ss in client.openall():
-        st.write(f"- {ss.title}")
+    spreadsheets = client.list_spreadsheet_files()
+    for ss in spreadsheets:
+        st.write(f"- {ss['name']} (ID: {ss['id']})")
 except gspread.exceptions.APIError as e:
     st.error("Erro de API ao acessar as planilhas. "
              "Verifique se o Service Account tem acesso à planilha desejada.")
-    st.stop()
-
+except Exception as e:
+    st.error(f"Erro desconhecido: {e}")
+    
 # ------------------- Abrir planilha específica -------------------
 planilha_nome = "Acoes"  # Alterar para o nome correto
 try:
@@ -212,6 +201,7 @@ def painel_acoes():
 # --------------- Main ----------------
 st.set_page_config(layout="wide")
 painel_acoes()
+
 
 
 
