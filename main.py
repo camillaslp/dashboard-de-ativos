@@ -6,6 +6,7 @@ import os
 import warnings
 from google.oauth2.service_account import Credentials
 import gspread
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ------------------- Carregar credenciais -------------------
@@ -35,17 +36,15 @@ except Exception as e:
 planilha_nome = "Acoes"  # Alterar para o nome correto
 try:
     sheet = client.open(planilha_nome).sheet1
-    st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
+    # st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
 except gspread.exceptions.SpreadsheetNotFound:
     st.error(f"Planilha '{planilha_nome}' não encontrada. "
              "Verifique se o nome está correto e se foi compartilhada com o Service Account.")
 except gspread.exceptions.APIError as e:
     st.error(f"Erro de API ao abrir a planilha '{planilha_nome}': {e}")
 
-
 # --------------- Config ----------------
 ARQUIVO_ACOES = "acoes.json"
-
 
 # --------------- Utils -----------------
 def carregar_json(path):
@@ -58,11 +57,9 @@ def carregar_json(path):
                     return {}
     return {}
 
-
 def salvar_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=4)
-
 
 def normalizar_codigo(codigo):
     c = codigo.strip().upper()
@@ -70,14 +67,12 @@ def normalizar_codigo(codigo):
         c += ".SA"
     return c
 
-
 def avaliar_alerta(preco_atual, preco_teto):
     if preco_atual < preco_teto:
         return "🟢 Oportunidade", "green"
     elif preco_atual > preco_teto * 1.1:
-         return "🔴 Acima do Teto", "red"
+        return "🔴 Acima do Teto", "red"
     return "Manter Posição", "gray"
-
 
 # --------------- Painel Ações ----------------
 def painel_acoes():
@@ -95,13 +90,14 @@ def painel_acoes():
                 if codigo:
                     try:
                         tk = yf.Ticker(codigo)
-                        if not tk.history(period="5d").empty:
+                        hist = tk.history(period="5d")
+                        if hist.empty or hist['Close'].dropna().empty:
+                            st.error("Código inválido ou sem pregão recente.")
+                        else:
                             ativos[codigo] = {"preco_medio": preco_medio, "preco_teto": preco_teto}
                             salvar_json(ARQUIVO_ACOES, ativos)
                             st.success(f"{codigo} salvo!")
                             st.rerun()
-                        else:
-                            st.error("Código inválido ou sem dados.")
                     except Exception as e:
                         st.error(f"Erro ao validar o código: {e}")
 
@@ -125,14 +121,13 @@ def painel_acoes():
                     st.warning(f"{ativo_exc} removido!")
                     st.rerun()
 
-
     if not ativos:
         st.info("Nenhuma ação cadastrada. Adicione uma na barra lateral.")
         return
 
     codigos_str = " ".join(ativos.keys())
-    dados_acoes = yf.download(codigos_str, period="2d", interval="5d", progress=False, group_by='ticker')
-    
+    dados_acoes = yf.download(codigos_str, period="5d", interval="1d", progress=False, group_by='ticker')
+
     if dados_acoes.empty and len(ativos) > 0:
         st.error("Não foi possível buscar os dados das ações.")
         return
@@ -141,31 +136,32 @@ def painel_acoes():
     i = 0
     for codigo, info in ativos.items():
         try:
+            # Seleciona corretamente o DataFrame para o ativo
             if len(ativos) == 1:
                 dados_ativo = dados_acoes
             else:
-                dados_ativo = dados_acoes[codigo]
+                dados_ativo = dados_acoes.get(codigo)
 
-            if dados_ativo.empty or dados_ativo['Close'].isnull().all():
+            # Valida dados
+            if dados_ativo is None or dados_ativo.empty or dados_ativo['Close'].dropna().empty:
                 with cols[i % 5]:
-                    st.warning(f"Sem dados para {codigo.replace('.SA', '')}")
+                    st.warning(f"Sem dados para {codigo.replace('.SA','')} (final de semana/feriado?)")
                 i += 1
                 continue
 
-            preco_atual = float(dados_ativo["Close"].iloc[-1])
-            preco_anterior = float(dados_ativo["Close"].iloc[-2]) if len(dados_ativo) > 1 else preco_atual
+            close_series = dados_ativo['Close'].dropna()
+            preco_atual = float(close_series.iloc[-1])
+            preco_anterior = float(close_series.iloc[-2]) if len(close_series) > 1 else preco_atual
             variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100 if preco_anterior else 0
             mensagem, cor_borda = avaliar_alerta(preco_atual, info["preco_teto"])
 
             with cols[i % 5]:
-                # O HTML a ser renderizado é definido aqui
                 html_card = f"""
-                
                 <div style="border:7px solid {cor_borda}; border-radius:10px; 
                             padding:20px; margin-bottom:55px; height:250px; 
                             display:flex; flex-direction:column; justify-content:space-between;
                             box-shadow: 0 5px 8px 0 rgba(0,0,0,0.2);">
-                    <h4 style="text-align:center; margin-top:-20px; margin-bottom:-2px;">{codigo.replace(".SA", "")}</h4>
+                    <h4 style="text-align:center; margin-top:-20px; margin-bottom:-2px;">{codigo.replace('.SA','')}</h4>
                     <div style="background-color:{cor_borda}; color:white; text-align:center; 
                                 padding:5px; border-radius:5px; font-weight:bold;">
                         {mensagem}
@@ -179,23 +175,13 @@ def painel_acoes():
                 </div>
                 """
                 st.markdown(html_card, unsafe_allow_html=True)
-                
-                
+
             i += 1
-        
+
         except Exception as e:
             with cols[i % 5]:
-                 st.error(f"Erro no card de {codigo.replace('.SA', '')}")
-            i+=1
+                st.error(f"Erro no card de {codigo.replace('.SA','')}")
+            i += 1
+
 # --------------- Main ----------------
-
 painel_acoes()
-
-
-
-
-
-
-
-
-
