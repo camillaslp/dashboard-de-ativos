@@ -30,18 +30,6 @@ try:
 except Exception as e:
     st.error(f"Erro ao autenticar no Google Sheets: {e}")
     st.stop()
-
-# ------------------- Listar planilhas acessíveis -------------------
-st.subheader("Planilhas acessíveis pelo Service Account")
-try:
-    spreadsheets = client.list_spreadsheet_files()
-    for ss in spreadsheets:
-        st.write(f"- {ss['name']} (ID: {ss['id']})")
-except gspread.exceptions.APIError as e:
-    st.error("Erro de API ao acessar as planilhas. "
-             "Verifique se o Service Account tem acesso à planilha desejada.")
-except Exception as e:
-    st.error(f"Erro desconhecido: {e}")
     
 # ------------------- Abrir planilha específica -------------------
 planilha_nome = "Acoes"  # Alterar para o nome correto
@@ -137,6 +125,7 @@ def painel_acoes():
                     st.warning(f"{ativo_exc} removido!")
                     st.rerun()
 
+
     if not ativos:
         st.info("Nenhuma ação cadastrada. Adicione uma na barra lateral.")
         return
@@ -198,10 +187,10 @@ def painel_acoes():
             with cols[i % 5]:
                  st.error(f"Erro no card de {codigo.replace('.SA', '')}")
             i+=1
-
 # --------------- Main ----------------
 
 painel_acoes()
+
 
 
 
