@@ -7,11 +7,50 @@ from google.oauth2.service_account import Credentials
 import gspread
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
-scope = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-client = gspread.authorize(creds)
-sheet = client.open("Acoes").sheet1
+# ------------------- Carregar credenciais -------------------
+try:
+    creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
+except KeyError:
+    st.error("Chave 'GOOGLE_CREDS' não encontrada em st.secrets")
+    st.stop()
+except json.JSONDecodeError as e:
+    st.error(f"Erro ao decodificar JSON das credenciais: {e}")
+    st.stop()
+
+# ------------------- Conectar ao Google Sheets -------------------
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+try:
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    client = gspread.authorize(creds)
+except Exception as e:
+    st.error(f"Erro ao autenticar no Google Sheets: {e}")
+    st.stop()
+
+# ------------------- Listar planilhas acessíveis -------------------
+try:
+    st.write("Planilhas acessíveis pelo Service Account:")
+    for ss in client.openall():
+        st.write(f"- {ss.title}")
+except gspread.exceptions.APIError as e:
+    st.error("Erro de API ao acessar as planilhas. "
+             "Verifique se o Service Account tem acesso à planilha desejada.")
+    st.stop()
+
+# ------------------- Abrir planilha específica -------------------
+planilha_nome = "Acoes"  # Alterar para o nome correto
+try:
+    sheet = client.open(planilha_nome).sheet1
+    st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
+except gspread.exceptions.SpreadsheetNotFound:
+    st.error(f"Planilha '{planilha_nome}' não encontrada. "
+             "Verifique se o nome está correto e se foi compartilhada com o Service Account.")
+except gspread.exceptions.APIError as e:
+    st.error(f"Erro de API ao abrir a planilha '{planilha_nome}': {e}")
+
 
 # --------------- Config ----------------
 ARQUIVO_ACOES = "acoes.json"
@@ -160,3 +199,4 @@ def painel_acoes():
 # --------------- Main ----------------
 st.set_page_config(layout="wide")
 painel_acoes()
+
