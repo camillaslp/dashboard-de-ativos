@@ -95,7 +95,7 @@ def painel_acoes():
                 if codigo:
                     try:
                         tk = yf.Ticker(codigo)
-                        if not tk.history(period="1d").empty:
+                        if not tk.history(period="5d").empty:
                             ativos[codigo] = {"preco_medio": preco_medio, "preco_teto": preco_teto}
                             salvar_json(ARQUIVO_ACOES, ativos)
                             st.success(f"{codigo} salvo!")
@@ -131,7 +131,7 @@ def painel_acoes():
         return
 
     codigos_str = " ".join(ativos.keys())
-    dados_acoes = yf.download(codigos_str, period="2d", interval="1d", progress=False, group_by='ticker')
+    dados_acoes = yf.download(codigos_str, period="2d", interval="5d", progress=False, group_by='ticker')
     
     if dados_acoes.empty and len(ativos) > 0:
         st.error("Não foi possível buscar os dados das ações.")
@@ -190,6 +190,7 @@ def painel_acoes():
 # --------------- Main ----------------
 
 painel_acoes()
+
 
 
 
