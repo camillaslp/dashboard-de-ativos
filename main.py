@@ -1,4 +1,5 @@
 import streamlit as st
+st.set_page_config(layout="wide")
 import yfinance as yf
 import json
 import os
@@ -199,8 +200,9 @@ def painel_acoes():
             i+=1
 
 # --------------- Main ----------------
-st.set_page_config(layout="wide")
+
 painel_acoes()
+
 
 
 
