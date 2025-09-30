@@ -280,7 +280,7 @@ def buscar_cotacoes_com_cache(ativos):
 
 # ------------------- Painel (UI) -------------------
 def painel_acoes():
-    st.title("📊 Dashboard de Ações (com cache de cotações)")
+    st.title("📊 Dashboard de Ações")
 
     # carregar ativos
     ativos = carregar_acoes_google()
@@ -384,3 +384,4 @@ def painel_acoes():
 # ------------------- Execução -------------------
 if __name__ == "__main__":
     painel_acoes()
+
