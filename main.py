@@ -1,3 +1,4 @@
+# main.py
 import streamlit as st
 st.set_page_config(layout="wide")
 import yfinance as yf
@@ -5,44 +6,49 @@ import json
 import warnings
 from google.oauth2.service_account import Credentials
 import gspread
+import datetime
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ------------------- Carregar credenciais -------------------
+# ------------------- Configurações -------------------
+SHEET_NAME = "Acoes"      # aba com cabeçalho: codigo, preco_medio, preco_teto
+COTACOES_TAB = "Cotacoes" # aba para guardar última cotação, preco_anterior, timestamp
+
+# ------------------- Conectar Google Sheets -------------------
 try:
     creds_dict = json.loads(st.secrets["GOOGLE_CREDS"])
 except KeyError:
-    st.error("Chave 'GOOGLE_CREDS' não encontrada em st.secrets")
+    print("Chave 'GOOGLE_CREDS' não encontrada em st.secrets. Configure em Deploy > Secrets.")
     st.stop()
 except json.JSONDecodeError as e:
-    st.error(f"Erro ao decodificar JSON das credenciais: {e}")
+    print(f"Erro ao decodificar JSON das credenciais: {e}")
     st.stop()
 
-# ------------------- Conectar ao Google Sheets -------------------
-scope = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 try:
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(creds)
 except Exception as e:
-    st.error(f"Erro ao autenticar no Google Sheets: {e}")
+    print(f"Erro ao autenticar no Google Sheets: {e}")
     st.stop()
 
-# ------------------- Abrir planilha -------------------
-planilha_nome = "Acoes"
+# abrir spreadsheet e aba principal (Acoes)
 try:
-    sheet = client.open(planilha_nome).sheet1
-    # st.success(f"Planilha '{planilha_nome}' aberta com sucesso!")
+    spreadsheet = client.open(SHEET_NAME)
+    # tenta abrir aba chamada exatamente "Acoes", se não existir usa sheet1
+    try:
+        sheet_acoes = spreadsheet.worksheet("Acoes")
+    except gspread.exceptions.WorksheetNotFound:
+        sheet_acoes = spreadsheet.sheet1
 except gspread.exceptions.SpreadsheetNotFound:
-    st.error(f"Planilha '{planilha_nome}' não encontrada. "
-             "Verifique o nome e se compartilhou com o Service Account.")
-except gspread.exceptions.APIError as e:
-    st.error(f"Erro de API ao abrir a planilha '{planilha_nome}': {e}")
+    print(f"Planilha '{SHEET_NAME}' não encontrada. Verifique nome e compartilhamento com o Service Account.")
+    st.stop()
+except Exception as e:
+    print(f"Erro ao abrir planilha: {e}")
+    st.stop()
 
-# ------------------- Funções Auxiliares -------------------
+# ------------------- Utilitários -------------------
 def normalizar_codigo(codigo):
     c = str(codigo).strip().upper()
     if c and not c.endswith(".SA"):
@@ -50,147 +56,302 @@ def normalizar_codigo(codigo):
     return c
 
 def str_para_float(valor_str):
-    """Converte entrada com vírgula para float"""
-    if isinstance(valor_str, str):
-        return float(valor_str.replace(".", "").replace(",", "."))
-    return float(valor_str)
+    """
+    Converte entrada como "32,50" ou "3.200,00" ou "32.50" ou números para float 32.5
+    """
+    if valor_str is None or valor_str == "":
+        return 0.0
+    if isinstance(valor_str, (int, float)):
+        return float(valor_str)
+    v = str(valor_str).strip()
+    v = v.replace("\xa0", "").replace(" ", "")
+    # Se tem '.' e ',' -> assume '.' separador de milhares -> remove pontos -> trocar vírgula por ponto
+    if "." in v and "," in v:
+        v = v.replace(".", "").replace(",", ".")
+    else:
+        v = v.replace(",", ".")
+    try:
+        return float(v)
+    except:
+        return 0.0
 
 def float_para_str(valor_float):
-    """Converte float para string com vírgula e 2 casas decimais"""
-    return f"{valor_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    """Formata float para string '32,50' (vírgula) ou 'N/D' se None"""
+    try:
+        if valor_float is None:
+            return "N/D"
+        return f"{valor_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "N/D"
 
+def ensure_cotacoes_tab(spreadsheet):
+    """Garante que a aba Cotacoes exista com cabeçalho (codigo, ultima_cotacao, preco_anterior, data_hora)"""
+    try:
+        w = spreadsheet.worksheet(COTACOES_TAB)
+    except gspread.exceptions.WorksheetNotFound:
+        w = spreadsheet.add_worksheet(title=COTACOES_TAB, rows="500", cols="4")
+        w.append_row(["codigo", "ultima_cotacao", "preco_anterior", "data_hora"])
+    # garantir que header tenha 4 colunas (caso exista versão antiga)
+    header = w.row_values(1)
+    if len(header) < 4:
+        # reescreve header completo
+        w.update("A1:D1", [["codigo", "ultima_cotacao", "preco_anterior", "data_hora"]])
+    return w
+
+# ------------------- Função de alerta (definida antes do uso) -------------------
 def avaliar_alerta(preco_atual, preco_teto):
-    if preco_atual < preco_teto:
-        return "🟢 Oportunidade", "green"
-    elif preco_atual > preco_teto * 1.1:
-        return "🔴 Acima do Teto", "red"
-    return "Manter Posição", "gray"
+    """
+    Retorna (mensagem, cor).
+    Se preco_atual for None -> retorna 'N/D' e cinza.
+    """
+    if preco_atual is None:
+        return "N/D", "gray"
+    try:
+        if preco_teto is None:
+            return "Manter Posição", "gray"
+        if preco_atual < preco_teto:
+            return "🟢 Oportunidade", "green"
+        elif preco_atual > preco_teto * 1.1:
+            return "🔴 Acima do Teto", "red"
+        else:
+            return "Manter Posição", "gray"
+    except Exception:
+        return "Manter Posição", "gray"
 
-# ------------------- Funções Google Sheets -------------------
-def carregar_acoes_google(sheet):
-    dados = sheet.get_all_records()
+# ------------------- Operações com Ações (aba Acoes) -------------------
+def carregar_acoes_google():
+    """Lê a aba 'Acoes' e retorna dict { 'TICKER.SA': {preco_medio: float, preco_teto: float} }"""
+    try:
+        registros = sheet_acoes.get_all_records()
+    except Exception as e:
+        print(f"Erro ao ler aba Acoes: {e}")
+        return {}
     ativos = {}
-    for r in dados:
+    for r in registros:
         codigo = normalizar_codigo(r.get("codigo", ""))
-        try:
-            preco_medio = str_para_float(r.get("preco_medio", "0"))
-        except:
-            preco_medio = 0.0
-        try:
-            preco_teto = str_para_float(r.get("preco_teto", "0"))
-        except:
-            preco_teto = 0.0
-        if codigo:
-            ativos[codigo] = {"preco_medio": preco_medio, "preco_teto": preco_teto}
+        if not codigo:
+            continue
+        pm = str_para_float(r.get("preco_medio", 0))
+        pt = str_para_float(r.get("preco_teto", 0))
+        ativos[codigo] = {"preco_medio": pm, "preco_teto": pt}
     return ativos
 
-def salvar_acao_google(sheet, codigo, preco_medio, preco_teto):
-    """Atualiza ou adiciona ação no Google Sheets"""
-    dados = sheet.get_all_records()
+def salvar_acao_google(codigo, preco_medio, preco_teto):
+    """Atualiza ou adiciona ação no Google Sheets (salva números)"""
     codigo = normalizar_codigo(codigo)
+    try:
+        registros = sheet_acoes.get_all_records()
+    except Exception as e:
+        print(f"Erro ao ler a planilha para salvar: {e}")
+        return
     encontrado = False
-    for i, r in enumerate(dados):
-        if normalizar_codigo(r["codigo"]) == codigo:
-            sheet.update(f"B{i+2}", preco_medio)  # preco_medio como float
-            sheet.update(f"C{i+2}", preco_teto)   # preco_teto como float
+    for i, r in enumerate(registros):
+        if normalizar_codigo(r.get("codigo","")) == codigo:
+            try:
+                sheet_acoes.update(f"B{i+2}", float(preco_medio))
+                sheet_acoes.update(f"C{i+2}", float(preco_teto))
+            except Exception as e:
+                print(f"Erro ao atualizar planilha: {e}")
             encontrado = True
             break
     if not encontrado:
-        sheet.append_row([codigo, preco_medio, preco_teto])
+        try:
+            sheet_acoes.append_row([codigo, float(preco_medio), float(preco_teto)])
+        except Exception as e:
+            print(f"Erro ao adicionar linha: {e}")
 
-def excluir_acao_google(sheet, codigo):
-    dados = sheet.get_all_records()
+def excluir_acao_google(codigo):
     codigo = normalizar_codigo(codigo)
-    for i, r in enumerate(dados):
-        if normalizar_codigo(r["codigo"]) == codigo:
-            sheet.delete_row(i+2)
+    try:
+        registros = sheet_acoes.get_all_records()
+    except Exception as e:
+        print(f"Erro ao ler a planilha para exclusão: {e}")
+        return
+    for i, r in enumerate(registros):
+        if normalizar_codigo(r.get("codigo","")) == codigo:
+            try:
+                sheet_acoes.delete_row(i+2)
+            except Exception as e:
+                print(f"Erro ao deletar linha: {e}")
             break
 
-# ------------------- Painel de Ações -------------------
-def painel_acoes():
-    st.title("📊 Dashboard de Ações")
-    ativos = carregar_acoes_google(sheet)
+# ------------------- Operações com Cotacoes (aba Cotacoes) -------------------
+def carregar_cotacoes_do_sheet():
+    """
+    Retorna dict {codigo: {'preco_atual': float, 'preco_anterior': float or None, 'data_hora': str}}
+    """
+    cotacoes = {}
+    w = ensure_cotacoes_tab(spreadsheet)
+    try:
+        regs = w.get_all_records()
+    except Exception:
+        return {}
+    for r in regs:
+        codigo = normalizar_codigo(r.get("codigo",""))
+        if not codigo:
+            continue
+        ultima = r.get("ultima_cotacao", "")
+        anterior = r.get("preco_anterior", "")
+        ts = r.get("data_hora", "")
+        try:
+            pa = str_para_float(ultima)
+        except:
+            pa = None
+        try:
+            pan = str_para_float(anterior)
+        except:
+            pan = None
+        cotacoes[codigo] = {"preco_atual": pa, "preco_anterior": pan, "data_hora": ts}
+    return cotacoes
 
+def atualizar_cotacao_no_sheet(codigo, preco_atual, preco_anterior=None):
+    """
+    Insere/atualiza a cotacao e timestamp na aba Cotacoes.
+    Salva os valores como números (floats) e timestamp string.
+    """
+    codigo = normalizar_codigo(codigo)
+    w = ensure_cotacoes_tab(spreadsheet)
+    try:
+        regs = w.get_all_records()
+    except Exception as e:
+        print(f"Erro ao acessar aba Cotacoes: {e}")
+        return
+    codigos = [normalizar_codigo(r.get("codigo","")) for r in regs]
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if codigo in codigos:
+        linha = codigos.index(codigo) + 2
+        try:
+            # salva número (float) em B e C
+            w.update(f"B{linha}", preco_atual)
+            w.update(f"C{linha}", preco_anterior if preco_anterior is not None else "")
+            w.update(f"D{linha}", ts)
+        except Exception as e:
+            print(f"Erro ao atualizar cotacao na sheet: {e}")
+    else:
+        try:
+            w.append_row([codigo, preco_atual, preco_anterior if preco_anterior is not None else "", ts])
+        except Exception as e:
+            print(f"Erro ao inserir cotacao na sheet: {e}")
+
+# ------------------- Buscar cotações com cache/fallback -------------------
+def buscar_cotacoes_com_cache(ativos):
+    """
+    Retorna dict {codigo: {'preco_atual': float or None, 'preco_anterior': float or None, 'variacao': float or None}}
+    """
+    resultados = {}
+    cotacoes_cache = carregar_cotacoes_do_sheet()
+
+    for codigo in ativos.keys():
+        preco_atual = None
+        preco_anterior = None
+        variacao = None
+        try:
+            tk = yf.Ticker(codigo)
+            hist = tk.history(period="1mo", interval="1d")
+            if hist is not None and not hist.empty:
+                close = hist["Close"].dropna()
+                if not close.empty:
+                    preco_atual = float(close.iloc[-1])
+                    preco_anterior = float(close.iloc[-2]) if len(close) > 1 else None
+                    if preco_anterior:
+                        variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100
+                    # atualiza cache no sheet (salva números)
+                    atualizar_cotacao_no_sheet(codigo, preco_atual, preco_anterior)
+                else:
+                    raise Exception("Sem fechamento (close) no histórico")
+            else:
+                raise Exception("Histórico vazio")
+        except Exception as e:
+            # fallback para cache
+            cached = cotacoes_cache.get(codigo)
+            if cached:
+                preco_atual = cached.get("preco_atual")
+                preco_anterior = cached.get("preco_anterior")
+                if preco_atual is not None and preco_anterior not in (None, 0):
+                    try:
+                        variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100
+                    except:
+                        variacao = None
+                st.info(f"Usando cotação em cache para {codigo} (erro yfinance: {e})")
+            else:
+                st.warning(f"Sem cotação atual para {codigo} e sem valor em cache ({e})")
+        resultados[codigo] = {"preco_atual": preco_atual, "preco_anterior": preco_anterior, "variacao": variacao}
+    return resultados
+
+# ------------------- Painel (UI) -------------------
+def painel_acoes():
+    st.title("📊 Dashboard de Ações (com cache de cotações)")
+
+    # carregar ativos
+    ativos = carregar_acoes_google()
+
+    # sidebar: gerenciar
     with st.sidebar:
         st.header("⚙️ Gerenciar Ativos")
 
-        # Cadastro de ação
+        # cadastrar
         with st.expander("➕ Cadastrar Ação", expanded=False):
             codigo_input = st.text_input("Código do Ativo (ex: PETR4)", key="cad_cod")
             preco_medio = st.text_input("Preço Médio (ex: 32,00)", key="cad_medio")
             preco_teto = st.text_input("Preço Teto (ex: 33,00)", key="cad_teto")
             if st.button("Salvar Ação", key="btn_salvar_acao"):
                 codigo = normalizar_codigo(codigo_input)
-                try:
-                    pm = str_para_float(preco_medio)
-                    pt = str_para_float(preco_teto)
-                    tk = yf.Ticker(codigo)
-                    hist = tk.history(period="1mo", interval="1d")
-                    if hist.empty or hist['Close'].dropna().empty:
-                        st.error("Código inválido ou sem pregão recente.")
-                    else:
-                        salvar_acao_google(sheet, codigo, pm, pt)
-                        st.success(f"{codigo} salvo!")
-                        st.experimental_rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
+                pm = str_para_float(preco_medio)
+                pt = str_para_float(preco_teto)
+                if not codigo:
+                    print("Código inválido.")
+                else:
+                    try:
+                        tk = yf.Ticker(codigo)
+                        hist = tk.history(period="1mo", interval="1d")
+                        if hist is None or hist.empty or hist["Close"].dropna().empty:
+                            print("Código inválido ou sem pregão recente.")
+                        else:
+                            salvar_acao_google(codigo, pm, pt)
+                            st.success(f"{codigo} salvo!")
+                    except Exception as e:
+                        print(f"Erro ao validar código: {e}")
 
+        # editar/excluir
         if ativos:
-            # Editar ação
             with st.expander("✏️ Editar Ação", expanded=False):
                 ativo_ed = st.selectbox("Selecione o Ativo", list(ativos.keys()), key="edicao_acao")
                 novo_med = st.text_input("Novo Preço Médio", value=float_para_str(ativos[ativo_ed]["preco_medio"]), key="novo_med")
                 novo_teto = st.text_input("Novo Preço Teto", value=float_para_str(ativos[ativo_ed]["preco_teto"]), key="novo_teto")
                 if st.button("Atualizar Ação", key="btn_atualizar_acao"):
-                    try:
-                        pm = str_para_float(novo_med)
-                        pt = str_para_float(novo_teto)
-                        salvar_acao_google(sheet, ativo_ed, pm, pt)
-                        st.success(f"{ativo_ed} atualizado!")
-                        st.experimental_rerun()
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+                    pm = str_para_float(novo_med)
+                    pt = str_para_float(novo_teto)
+                    salvar_acao_google(ativo_ed, pm, pt)
+                    st.success(f"{ativo_ed} atualizado!")
 
-            # Excluir ação
             with st.expander("🗑️ Excluir Ação", expanded=False):
                 ativo_exc = st.selectbox("Selecione para Excluir", list(ativos.keys()), key="excluir_acao")
                 if st.button("Remover", key="btn_remover_acao"):
-                    excluir_acao_google(sheet, ativo_exc)
+                    excluir_acao_google(ativo_exc)
                     st.warning(f"{ativo_exc} removido!")
-                    st.experimental_rerun()
 
     if not ativos:
-        st.info("Nenhuma ação cadastrada. Adicione uma na barra lateral.")
+        st.info("Nenhuma ação cadastrada. Adicione na barra lateral.")
         return
 
-    # ------------------- Cards -------------------
-    codigos_str = " ".join(ativos.keys())
-    dados_acoes = yf.download(codigos_str, period="5d", interval="1d", progress=False, group_by='ticker')
+    # Buscar cotações (com cache)
+    cotacoes = buscar_cotacoes_com_cache(ativos)
 
-    if dados_acoes.empty and len(ativos) > 0:
-        st.error("Não foi possível buscar os dados das ações.")
-        return
-
+    # Montar cards (5 colunas)
     cols = st.columns(5)
     i = 0
     for codigo, info in ativos.items():
         try:
-            if len(ativos) == 1:
-                dados_ativo = dados_acoes
-            else:
-                dados_ativo = dados_acoes.get(codigo)
+            cot = cotacoes.get(codigo, {})
+            preco_atual = cot.get("preco_atual")
+            variacao = cot.get("variacao")
+            preco_medio = info["preco_medio"]
+            preco_teto = info["preco_teto"]
 
-            if dados_ativo is None or dados_ativo.empty or dados_ativo['Close'].dropna().empty:
-                with cols[i % 5]:
-                    st.warning(f"Sem dados para {codigo.replace('.SA','')} (final de semana/feriado?)")
-                i += 1
-                continue
-
-            close_series = dados_ativo['Close'].dropna()
-            preco_atual = float(close_series.iloc[-1])
-            preco_anterior = float(close_series.iloc[-2]) if len(close_series) > 1 else preco_atual
-            variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100 if preco_anterior else 0
-            mensagem, cor_borda = avaliar_alerta(preco_atual, info["preco_teto"])
+            texto_preco_atual = float_para_str(preco_atual) if preco_atual is not None else "N/D"
+            texto_pm = float_para_str(preco_medio)
+            texto_pt = float_para_str(preco_teto)
+            mensagem, cor_borda = avaliar_alerta(preco_atual, preco_teto)
 
             with cols[i % 5]:
                 html_card = f"""
@@ -203,11 +364,11 @@ def painel_acoes():
                                 padding:5px; border-radius:5px; font-weight:bold;">
                         {mensagem}
                     </div>
-                    <b>Preço Atual: R$ {float_para_str(preco_atual)}</b>
-                    Preço Médio: R$ {float_para_str(info['preco_medio'])}
-                    Preço Teto: R$ {float_para_str(info['preco_teto'])}</p>
-                    <p>Variação D-1: <span style="color:{'green' if variacao >= 0 else 'red'}; font-weight:bold;">
-                        {'▲' if variacao >= 0 else '▼'} {variacao:.2f}%
+                    <b>Preço Atual: R$ {texto_preco_atual}</b>
+                    <p>Preço Médio: R$ {texto_pm}</p>
+                    <p>Preço Teto: R$ {texto_pt}</p>
+                    <p>Variação D-1: <span style="color:{'green' if (variacao is not None and variacao >= 0) else 'red'}; font-weight:bold;">
+                        {'▲' if (variacao is not None and variacao >= 0) else '▼'} {f'{variacao:.2f}%' if variacao is not None else 'N/D'}
                     </span></p>  
                 </div>
                 """
@@ -217,9 +378,9 @@ def painel_acoes():
 
         except Exception as e:
             with cols[i % 5]:
-                st.error(f"Erro no card de {codigo.replace('.SA','')}: {e}")
+                print(f"Erro no card de {codigo.replace('.SA','')}: {e}")
             i += 1
 
-# ------------------- Main -------------------
-painel_acoes()
-
+# ------------------- Execução -------------------
+if __name__ == "__main__":
+    painel_acoes()
