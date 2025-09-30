@@ -364,13 +364,13 @@ def painel_acoes():
                                 padding:5px; border-radius:5px; font-weight:bold;">
                         {mensagem}
                     </div>
-                    <b>Preço Atual: R$ {texto_preco_atual}</b>
-                    <p>Preço Médio: R$ {texto_pm}</p>
-                    <p>Preço Teto: R$ {texto_pt}</p>
-                    <p>Variação D-1: <span style="color:{'green' if (variacao is not None and variacao >= 0) else 'red'}; font-weight:bold;">
+                    <b style="text-align:center;">Preço Atual: R$ {texto_preco_atual}</b>
+                    <b style="text-align:center;">Preço Médio: R$ {texto_pm}</b>
+                    <p style="text-align:center;"><b>Preço Teto: R$ {texto_pt}</b></p>
+                    <p style="text-align:center;">Variação D-1: <span style="color:{'green' if (variacao is not None and variacao >= 0) else 'red'}; font-weight:bold;">
                         {'▲' if (variacao is not None and variacao >= 0) else '▼'} {f'{variacao:.2f}%' if variacao is not None else 'N/D'}
-                    </span></p>  
-                </div>
+                    </span></p>
+                    </div>
                 """
                 st.markdown(html_card, unsafe_allow_html=True)
 
@@ -384,4 +384,3 @@ def painel_acoes():
 # ------------------- Execução -------------------
 if __name__ == "__main__":
     painel_acoes()
-
