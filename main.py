@@ -272,7 +272,7 @@ def buscar_cotacoes_com_cache(ativos):
                         variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100
                     except:
                         variacao = None
-                st.info(f"Usando cotação em cache para {codigo} (erro yfinance: {e})")
+                print(f"Usando cotação em cache para {codigo} (erro yfinance: {e})")
             else:
                 st.warning(f"Sem cotação atual para {codigo} e sem valor em cache ({e})")
         resultados[codigo] = {"preco_atual": preco_atual, "preco_anterior": preco_anterior, "variacao": variacao}
@@ -384,3 +384,4 @@ def painel_acoes():
 # ------------------- Execução -------------------
 if __name__ == "__main__":
     painel_acoes()
+
