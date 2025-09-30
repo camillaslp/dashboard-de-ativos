@@ -125,7 +125,7 @@ def painel_acoes():
                     pm = str_para_float(preco_medio)
                     pt = str_para_float(preco_teto)
                     tk = yf.Ticker(codigo)
-                    hist = tk.history(period="5d")
+                    hist = tk.history(period="1mo", interval="1d")
                     if hist.empty or hist['Close'].dropna().empty:
                         st.error("Código inválido ou sem pregão recente.")
                     else:
@@ -222,3 +222,4 @@ def painel_acoes():
 
 # ------------------- Main -------------------
 painel_acoes()
+
