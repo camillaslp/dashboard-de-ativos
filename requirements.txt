@@ -1,7 +1,8 @@
 streamlit==1.30.0
-yfinance==0.2.33
+yfinance==0.2.66
 gspread==5.11.0
 google-auth==2.22.0
 requests==2.32.0
+
 
 
