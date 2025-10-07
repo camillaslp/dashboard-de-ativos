@@ -7,6 +7,7 @@ import warnings
 from google.oauth2.service_account import Credentials
 import gspread
 import datetime
+import pytz
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -234,48 +235,54 @@ def atualizar_cotacao_no_sheet(codigo, preco_atual, preco_anterior=None):
             print(f"Erro ao inserir cotacao na sheet: {e}")
 
 # ------------------- Buscar cotações com cache/fallback -------------------
-def buscar_cotacoes_com_cache(ativos):
-    """
-    Retorna dict {codigo: {'preco_atual': float or None, 'preco_anterior': float or None, 'variacao': float or None}}
-    """
+def buscar_cotacoes_com_cache(codigos):
     resultados = {}
-    cotacoes_cache = carregar_cotacoes_do_sheet()
+    timezone_br = pytz.timezone("America/Sao_Paulo")
 
-    for codigo in ativos.keys():
-        preco_atual = None
-        preco_anterior = None
-        variacao = None
+    for codigo in codigos:
         try:
             tk = yf.Ticker(codigo)
+
+            # tenta 1 mês primeiro
             hist = tk.history(period="1mo", interval="1d")
-            if hist is not None and not hist.empty:
-                close = hist["Close"].dropna()
-                if not close.empty:
-                    preco_atual = float(close.iloc[-1])
-                    preco_anterior = float(close.iloc[-2]) if len(close) > 1 else None
-                    if preco_anterior:
-                        variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100
-                    # atualiza cache no sheet (salva números)
-                    atualizar_cotacao_no_sheet(codigo, preco_atual, preco_anterior)
-                else:
-                    raise Exception("Sem fechamento (close) no histórico")
+            close = hist["Close"].dropna()
+
+            # fallback: se só tiver 1 fechamento, busca 2 meses
+            if len(close) < 2:
+                hist2 = tk.history(period="2mo", interval="1d")
+                close = hist2["Close"].dropna()
+
+            if len(close) == 0:
+                raise Exception("Histórico vazio.")
+            elif len(close) == 1:
+                preco_atual = float(close.iloc[-1])
+                preco_anterior = None
+                variacao = None
             else:
-                raise Exception("Histórico vazio")
+                preco_atual = float(close.iloc[-1])
+                preco_anterior = float(close.iloc[-2])
+                variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100 if preco_anterior else None
+
+            # atualiza cache no sheet (se houver)
+            atualizar_cotacao_no_sheet(codigo, preco_atual, preco_anterior)
+
+            # salva resultado formatado
+            resultados[codigo] = {
+                "preco_atual": preco_atual,
+                "preco_anterior": preco_anterior,
+                "variacao": variacao,
+                "status": "OK"
+            }
+
         except Exception as e:
-            # fallback para cache
-            cached = cotacoes_cache.get(codigo)
-            if cached:
-                preco_atual = cached.get("preco_atual")
-                preco_anterior = cached.get("preco_anterior")
-                if preco_atual is not None and preco_anterior not in (None, 0):
-                    try:
-                        variacao = ((preco_atual - preco_anterior) / preco_anterior) * 100
-                    except:
-                        variacao = None
-                print(f"Usando cotação em cache para {codigo} (erro yfinance: {e})")
-            else:
-                st.warning(f"Sem cotação atual para {codigo} e sem valor em cache ({e})")
-        resultados[codigo] = {"preco_atual": preco_atual, "preco_anterior": preco_anterior, "variacao": variacao}
+            print(f"Erro ao buscar {codigo}: {e}")
+            resultados[codigo] = {
+                "preco_atual": None,
+                "preco_anterior": None,
+                "variacao": None,
+                "status": f"Erro: {e}"
+            }
+
     return resultados
 
 # ------------------- Painel (UI) -------------------
@@ -384,4 +391,5 @@ def painel_acoes():
 # ------------------- Execução -------------------
 if __name__ == "__main__":
     painel_acoes()
+
 
